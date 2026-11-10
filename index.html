@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Banco Imobiliário da Turma</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f4f1e8;--card:#fff;--tx:#1f2a1f;--mut:#667;--pri:#1b7a43;--pri-tx:#fff;--bd:#d9d4c3;--bad:#b3261e;--gold:#b8860b}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14181a;--card:#1e2427;--tx:#eef1ee;--mut:#9aa6a0;--pri:#3fae6d;--pri-tx:#06150c;--bd:#33403a;--bad:#ff8a80;--gold:#e6b422}}
+:root[data-theme="dark"]{--bg:#14181a;--card:#1e2427;--tx:#eef1ee;--mut:#9aa6a0;--pri:#3fae6d;--pri-tx:#06150c;--bd:#33403a;--bad:#ff8a80;--gold:#e6b422}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.4}
+main{max-width:920px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:0}h2{font-size:1.1rem;margin:0 0 10px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:14px}
+.bal{font-size:2rem;font-weight:700;color:var(--pri)}
+input,select,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx);max-width:100%}
+button{background:var(--pri);color:var(--pri-tx);border:0;cursor:pointer;font-weight:600}
+button.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}
+button.bad{background:var(--bad);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.prop{border:1px solid var(--bd);border-radius:10px;padding:10px}
+.tag{font-size:.75rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+.own{color:var(--gold);font-weight:600}.mut{color:var(--mut);font-size:.9rem}
+.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.9rem}
+td,th{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}
+.err{color:var(--bad);min-height:1.2em}.ok{color:var(--pri)}
+.tabs{display:flex;gap:6px;margin-bottom:12px}.tabs button{flex:1}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}.dlg{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px;max-width:420px;width:100%}
+</style>
+</head>
+<body>
+<main>
+<div class="top"><h1>🎲 Banco Imobiliário da Turma</h1><div id="who"></div></div>
+<div id="app"><p class="mut">Carregando…</p></div>
+<div id="modal"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=n=>'R$ '+Number(n||0).toLocaleString('pt-BR');
+const slug=s=>s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+async function sha(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('bi-turma:'+s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+const START=1000;
+let db=null,players={},props={},logs=[],cfg=null,view='login',tab='player',me=null,msg='',msgOk=false,pending=false,loaded={p:0,r:0,c:0},pend={},ofs={},dlg=null,perr='';
+
+const EMP=['Padaria Pão Quente','Tech Nova','Auto Center Veloz','Mercado Bom Preço','Farmácia Vida','Construtora Alicerce','Editora Saber','Cafeteria Grão','Academia Fit','Rádio Onda'];
+const PAR=['Parque das Águas','Parque do Sol','Parque da Lua','Parque Verde','Parque Azul','Parque Central','Parque das Flores','Parque dos Pássaros','Parque da Cachoeira','Parque do Lago'];
+const BAN=['Banco Alfa','Banco Beta','Banco Gama','Banco Delta','Banco Ômega'];
+function seedList(){const l=[];
+EMP.forEach((n,i)=>l.push({id:'emp'+(i+1),tipo:'Empresa',nome:n,preco:200+i*40,aluguel:20+i*6}));
+PAR.forEach((n,i)=>l.push({id:'par'+(i+1),tipo:'Parque',nome:n,preco:150+i*25,aluguel:15+i*4}));
+BAN.forEach((n,i)=>l.push({id:'ban'+(i+1),tipo:'Banco',nome:n,preco:300+i*50,aluguel:40+i*10}));
+return l}
+
+function setMsg(t,ok){msg=t;msgOk=!!ok;render(true)}
+function log(o){return db.collection('logs').add({ts:Date.now(),...o})}
+
+async function boot(){
+ let t=setTimeout(()=>{$('#app').innerHTML='<p class="err">Não foi possível conectar ao banco de dados. Abra a página pelo link do professor, logado no Claude.</p>'},10000);
+ try{const c=await claude.use('db');if(!c)return;db=c}catch(e){return}
+ clearTimeout(t);
+ db.collection('players').onSnapshot(s=>{players={};s.docs.forEach(d=>players[d.id]=d.data());loaded.p=1;render()});
+ db.collection('props').onSnapshot(s=>{props={};s.docs.forEach(d=>props[d.id]=d.data());loaded.r=1;render()});
+ db.collection('logs').orderBy('ts','desc').limit(150).onSnapshot(s=>{logs=s.docs.map(d=>d.data());render()});
+ db.doc('config/admin').onSnapshot(s=>{cfg=s.exists?s.data():null;loaded.c=1;render()});
+ db.collection('pend').where('status','==','pendente').onSnapshot(s=>{pend={};s.docs.forEach(d=>pend[d.id]=d.data());render();renderModal()});
+ db.collection('ofertas').where('status','==','aberta').onSnapshot(s=>{ofs={};s.docs.forEach(d=>ofs[d.id]=d.data());render()});
+ try{const m=sessionStorage.getItem('bi-me');if(m){me=m;view='player'}}catch(e){}
+}
+
+function render(force){
+ const a=document.activeElement;
+ if(!force&&a&&/INPUT|SELECT/.test(a.tagName)){pending=true;return}
+ pending=false;
+ if(!loaded.p||!loaded.r||!loaded.c)return;
+ if(view==='player'&&!players[me]){view='login'}
+ $('#who').innerHTML=view==='login'?'':`<span class="mut">${view==='admin'?'Administrador':esc(players[me].nome)}</span> <button class="sec" data-act="logout">Sair</button>`;
+ $('#app').innerHTML=view==='login'?loginV():view==='admin'?adminV():playerV();renderModal();
+}
+document.addEventListener('focusout',()=>{setTimeout(()=>{if(pending)render()},50)});
+
+const ICON={Empresa:['🥖','💻','🚗','🛒','💊','🏗️','📚','☕','🏋️','📻'],Parque:['🌳','☀️','🌙','🌿','💧','🏞️','🌸','🐦','🌊','🦆'],Banco:['🏦','💰','💳','🪙','💎']};
+function art(id,t){
+ const i=+id.slice(3)||1,h=(i*47+(t==='Parque'?100:t==='Banco'?210:10))%360,ic=(ICON[t]||[])[i-1]||'🏠';
+ let s='<svg viewBox="0 0 240 100" width="100%" style="display:block;border-radius:8px;margin-bottom:8px" aria-hidden="true">';
+ if(t==='Empresa'){
+  s+=`<rect width="240" height="100" fill="hsl(${h} 70% 88%)"/><rect x="20" y="50" width="40" height="36" fill="hsl(${h} 40% 65%)"/><rect x="180" y="44" width="44" height="42" fill="hsl(${h} 40% 60%)"/><rect y="86" width="240" height="14" fill="hsl(${h} 15% 55%)"/><rect x="70" y="26" width="100" height="60" rx="3" fill="hsl(${h} 55% 42%)"/><rect x="112" y="68" width="16" height="18" fill="hsl(${h} 40% 22%)"/>`;
+  for(let r=0;r<2;r++)for(let c=0;c<4;c++)s+=`<rect x="${80+c*22}" y="${34+r*16}" width="14" height="10" fill="hsl(50 90% 78%)"/>`;
+  s+=`<text x="120" y="22" font-size="20" text-anchor="middle">${ic}</text>`;
+ }else if(t==='Parque'){
+  s+=`<rect width="240" height="100" fill="hsl(200 75% 88%)"/><circle cx="205" cy="22" r="13" fill="hsl(45 95% 60%)"/><ellipse cx="120" cy="108" rx="160" ry="44" fill="hsl(${110+i*4} 45% 48%)"/>`;
+  [40,95,150,200].forEach((x,k)=>s+=`<rect x="${x-3}" y="${58+k%2*6}" width="6" height="22" fill="hsl(25 40% 30%)"/><circle cx="${x}" cy="${52+k%2*6}" r="${15-k%2*2}" fill="hsl(${120+k*8} 50% 30%)"/>`);
+  s+=`<text x="120" y="40" font-size="26" text-anchor="middle">${ic}</text>`;
+ }else{
+  s+=`<rect width="240" height="100" fill="hsl(${h} 30% 90%)"/><polygon points="55,38 120,8 185,38" fill="hsl(${h} 50% 38%)"/><rect x="60" y="38" width="120" height="6" fill="hsl(${h} 30% 55%)"/>`;
+  for(let c=0;c<4;c++)s+=`<rect x="${70+c*32}" y="44" width="14" height="32" fill="hsl(${h} 25% 98%)" stroke="hsl(${h} 20% 60%)"/>`;
+  s+=`<rect x="54" y="76" width="132" height="6" fill="hsl(${h} 20% 60%)"/><rect x="48" y="82" width="144" height="8" fill="hsl(${h} 20% 50%)"/><text x="120" y="34" font-size="16" text-anchor="middle">${ic}</text>`;
+ }
+ return s+'</svg>'}
+
+async function settle(r){
+ if(r.prop){const s=await db.doc('props/'+r.prop).get();if(!s.exists||s.data().dono!==r.para)throw new Error('A propriedade não pertence mais ao vendedor.')}
+ await pay(r.de,r.para,r.valor,r.desc);
+ if(r.prop)await db.doc('props/'+r.prop).update({dono:r.de})}
+async function request(r){
+ const a=await fresh(r.de);if(!a||a.saldo<r.valor)throw new Error('Saldo insuficiente.');
+ if(cfg&&cfg.validar===false){await settle(r);return 'concluída.'}
+ await db.collection('pend').add({...r,ts:Date.now(),status:'pendente'});return 'enviada ao administrador para validação.'}
+
+function pendV(){
+ const rec=Object.entries(ofs).filter(([,o])=>o.para===me),env=Object.entries(ofs).filter(([,o])=>o.de===me),aw=Object.values(pend).filter(r=>r.de===me||r.para===me);
+ if(!rec.length&&!env.length&&!aw.length)return '';
+ const n=k=>players[k]?esc(players[k].nome):'?',pn=o=>esc(props[o.prop]?props[o.prop].nome:'?');
+ return `<div class="card"><h2>Pendências</h2>`+
+ rec.map(([id,o])=>`<div class="row" style="margin-bottom:6px"><span>${n(o.de)} oferece <b>${pn(o)}</b> por ${fmt(o.valor)}</span><button data-act="accept" data-id="${id}">Aceitar</button><button class="sec" data-act="decline" data-id="${id}">Recusar</button></div>`).join('')+
+ env.map(([id,o])=>`<div class="row" style="margin-bottom:6px"><span class="mut">Oferta de <b>${pn(o)}</b> a ${n(o.para)} por ${fmt(o.valor)}</span><button class="sec" data-act="decline" data-id="${id}">Cancelar</button></div>`).join('')+
+ aw.map(r=>`<div class="mut">⏳ Aguardando validação do administrador: ${esc(r.desc)} (${fmt(r.valor)})</div>`).join('')+'</div>'}
+
+function renderModal(){
+ let h='';
+ if(dlg)h=`<div class="ov"><div class="dlg"><p>${esc(dlg.text)}</p><div class="row"><button class="bad" data-act="dlgyes">Confirmar</button><button class="sec" data-act="dlgno">Cancelar</button></div></div></div>`;
+ else if(view==='admin'){const ids=Object.keys(pend).sort((a,b)=>pend[a].ts-pend[b].ts);
+  if(ids.length){const id=ids[0],r=pend[id],n=k=>players[k]?esc(players[k].nome):'?',sd=players[r.de]?players[r.de].saldo:0;
+   h=`<div class="ov"><div class="dlg"><div class="tag">Validar transação · ${ids.length} pendente${ids.length>1?'s':''}</div><h2>${r.tipo==='venda'?'Venda de propriedade':r.tipo==='aluguel'?'Pagamento de aluguel':'Transferência'}</h2><p>${esc(r.desc)}</p><p><b>${n(r.de)}</b> → <b>${n(r.para)}</b><br><span class="bal" style="font-size:1.5rem">${fmt(r.valor)}</span><br><span class="mut">Saldo atual de ${n(r.de)}: ${fmt(sd)}</span></p><p class="err">${esc(perr)}</p><div class="row"><button data-act="approve" data-id="${id}">Aprovar</button><button class="bad" data-act="reject" data-id="${id}">Recusar</button></div></div></div>`}}
+ $('#modal').innerHTML=h}
+
+function loginV(){
+ const first=!cfg;
+ return `<div class="card" style="max-width:420px;margin:0 auto">
+ <div class="tabs"><button class="${tab==='player'?'':'sec'}" data-act="tab" data-id="player">Jogador</button><button class="${tab==='admin'?'':'sec'}" data-act="tab" data-id="admin">Administrador</button></div>
+ ${tab==='player'?`<div class="row" style="flex-direction:column;align-items:stretch">
+ <input id="lname" placeholder="Seu nome" autocomplete="username"><input id="lpass" type="password" placeholder="Senha" autocomplete="current-password">
+ <button data-act="login">Entrar</button><button class="sec" data-act="register">Cadastrar-me (ganha ${fmt(START)})</button></div>`
+ :`<div class="row" style="flex-direction:column;align-items:stretch">
+ ${first?'<p class="mut">Primeiro acesso: defina a senha master do administrador.</p>':''}
+ <input id="apass" type="password" placeholder="${first?'Criar senha master':'Senha master'}">
+ <button data-act="adminlogin">${first?'Criar e entrar':'Entrar'}</button></div>`}
+ <p class="${msgOk?'ok':'err'}">${esc(msg)}</p></div>`;
+}
+
+async function doLogin(){
+ const k=slug($('#lname').value),p=players[k];
+ if(!p||p.hash!==await sha($('#lpass').value))return setMsg('Nome ou senha incorretos.');
+ me=k;view='player';msg='';try{sessionStorage.setItem('bi-me',k)}catch(e){}render(true)}
+async function doRegister(){
+ const n=$('#lname').value.trim(),pw=$('#lpass').value,k=slug(n);
+ if(!k)return setMsg('Digite seu nome.');
+ if(pw.length<3)return setMsg('A senha precisa de ao menos 3 caracteres.');
+ if(players[k])return setMsg('Esse nome já está cadastrado. Use outro ou entre com a senha.');
+ await db.doc('players/'+k).set({nome:n,hash:await sha(pw),saldo:START});
+ await log({de:'banco',para:k,valor:START,desc:`Saldo inicial de ${n}`});
+ me=k;view='player';msg='';try{sessionStorage.setItem('bi-me',k)}catch(e){}render(true)}
+async function doAdmin(){
+ const pw=$('#apass').value;if(pw.length<4)return setMsg('Use ao menos 4 caracteres.');
+ const h=await sha(pw);
+ if(!cfg){await db.doc('config/admin').set({hash:h});cfg={hash:h}}
+ else if(cfg.hash!==h)return setMsg('Senha master incorreta.');
+ view='admin';msg='';render(true)}
+
+function propCard(p,id,mode){
+ const o=p.dono?players[p.dono]:null;
+ let btn='';
+ if(mode==='player'){
+  if(!p.dono)btn=`<button data-act="buy" data-id="${id}">Comprar</button>`;
+  else if(p.dono===me){const ot=Object.entries(players).filter(([k])=>k!==me);btn=`<button class="sec" data-act="sell" data-id="${id}">Vender ao banco (${fmt(p.preco/2)})</button><div class="row" style="margin-top:8px"><select id="sb-${id}"><option value="">Vender a…</option>${ot.map(([k,x])=>`<option value="${k}">${esc(x.nome)}</option>`).join('')}</select><input id="sv-${id}" type="number" min="1" value="${p.preco}" style="width:90px"><button data-act="offer" data-id="${id}">Oferecer</button></div>`}
+  else btn=`<button data-act="rent" data-id="${id}">Passei aqui: pagar ${fmt(p.aluguel)}</button>`;
+ }
+ return `<div class="prop">${art(id,p.tipo)}<div class="tag">${p.tipo}</div><strong>${esc(p.nome)}</strong>
+ <div class="mut">Preço ${fmt(p.preco)} · Aluguel ${fmt(p.aluguel)}</div>
+ <div>${o?`<span class="own">Dono: ${esc(o.nome)}</span>`:'<span class="mut">À venda no banco</span>'}</div>
+ <div style="margin-top:8px">${btn}</div></div>`;
+}
+
+function playerV(){
+ const p=players[me],others=Object.entries(players).filter(([k])=>k!==me);
+ const list=Object.entries(props).sort((a,b)=>a[0].localeCompare(b[0],'pt',{numeric:true}));
+ const mine=list.filter(([,x])=>x.dono===me);
+ const mylogs=logs.filter(l=>l.de===me||l.para===me).slice(0,15);
+ const sec=t=>{const l=list.filter(([,x])=>x.tipo===t);return `<h2>${t==='Banco'?'Bancos':t==='Parque'?'Parques':'Empresas'}</h2><div class="grid">${l.map(([id,x])=>propCard(x,id,'player')).join('')}</div>`};
+ return `<div class="card"><div class="tag">Seu saldo</div><div class="bal">${fmt(p.saldo)}</div>
+ <p class="mut">Suas propriedades: ${mine.length?mine.map(([,x])=>esc(x.nome)).join(', '):'nenhuma ainda'}</p></div>
+ ${pendV()}<div class="card"><h2>Transferir saldo</h2><div class="row">
+ <select id="tto"><option value="">Para quem?</option>${others.map(([k,x])=>`<option value="${k}">${esc(x.nome)}</option>`).join('')}</select>
+ <input id="tamt" type="number" min="1" placeholder="Valor" style="width:120px"><button data-act="transfer">Transferir</button></div>
+ <p class="${msgOk?'ok':'err'}">${esc(msg)}</p></div>
+ <div class="card">${Object.keys(props).length?sec('Empresa')+'<br>'+sec('Parque')+'<br>'+sec('Banco'):'<p class="mut">O professor ainda não iniciou o jogo.</p>'}</div>
+ <div class="card"><h2>Meu extrato</h2><div class="tbl"><table><tr><th>Quando</th><th>Descrição</th><th>Valor</th></tr>
+ ${mylogs.map(l=>`<tr><td>${new Date(l.ts).toLocaleString('pt-BR')}</td><td>${esc(l.desc)}</td><td>${l.para===me?'+':'−'}${fmt(l.valor)}</td></tr>`).join('')||'<tr><td colspan="3" class="mut">Sem movimentações.</td></tr>'}</table></div></div>`;
+}
+
+function adminV(){
+ const pl=Object.entries(players),list=Object.entries(props).sort((a,b)=>a[0].localeCompare(b[0],'pt',{numeric:true}));
+ return `<div class="card"><h2>Jogadores cadastrados (${pl.length})</h2><p class="mut">Os alunos se cadastram sozinhos na tela de login e começam com ${fmt(START)}. Você também pode criar jogadores aqui e trocar a senha de quem esquecer.</p>
+ <div class="row" style="margin-bottom:10px"><input id="nn" placeholder="Nome"><input id="np" placeholder="Senha"><input id="ns" type="number" placeholder="Saldo inicial (padrão 1000)" style="width:130px"><button data-act="addp">Criar / atualizar senha</button></div>
+ <p class="${msgOk?'ok':'err'}">${esc(msg)}</p>
+ <div class="tbl"><table><tr><th>Jogador</th><th>Saldo</th><th>Ajustar</th><th></th></tr>
+ ${pl.map(([k,x])=>`<tr><td>${esc(x.nome)}</td><td>${fmt(x.saldo)}</td><td><input id="cr-${k}" type="number" min="1" placeholder="Valor" style="width:100px"> <button data-act="credit" data-id="${k}">+</button> <button class="bad" data-act="debit" data-id="${k}">−</button></td><td><button class="sec" data-act="delp" data-id="${k}">Excluir</button></td></tr>`).join('')||'<tr><td colspan="4" class="mut">Nenhum jogador.</td></tr>'}</table></div></div>
+ <div class="card"><div class="row"><span>Validação do administrador em transferências, aluguéis e vendas entre alunos: <b>${cfg&&cfg.validar===false?'DESLIGADA':'LIGADA'}</b></span><button class="sec" data-act="togglev">${cfg&&cfg.validar===false?'Ligar':'Desligar'}</button></div></div>
+ <div class="card"><h2>Propriedades (10 empresas, 10 parques, 5 bancos)</h2>
+ ${list.length?`<div class="tbl"><table><tr><th>Nome</th><th>Tipo</th><th>Preço</th><th>Aluguel</th><th>Dono</th><th></th></tr>
+ ${list.map(([id,x])=>`<tr><td>${esc(x.nome)}</td><td>${x.tipo}</td><td><input id="pp-${id}" type="number" value="${x.preco}" style="width:90px"></td><td><input id="pa-${id}" type="number" value="${x.aluguel}" style="width:90px"></td><td>${x.dono&&players[x.dono]?esc(players[x.dono].nome):'—'}</td><td><button data-act="saveprop" data-id="${id}">Salvar</button> ${x.dono?`<button class="sec" data-act="free" data-id="${id}">Liberar</button>`:''}</td></tr>`).join('')}</table></div>`
+ :`<button data-act="seed">Criar as 25 propriedades</button>`}</div>
+ <div class="card"><h2>Registro de movimentações</h2><div class="tbl"><table><tr><th>Quando</th><th>Descrição</th><th>Valor</th></tr>
+ ${logs.map(l=>`<tr><td>${new Date(l.ts).toLocaleString('pt-BR')}</td><td>${esc(l.desc)}</td><td>${fmt(l.valor)}</td></tr>`).join('')||'<tr><td colspan="3" class="mut">Vazio.</td></tr>'}</table></div></div>`;
+}
+
+const num=id=>Math.floor(Number($('#'+id)?.value));
+async function fresh(k){const s=await db.doc('players/'+k).get();return s.exists?s.data():null}
+
+async function pay(from,to,v,desc){ // from/to: id de jogador ou null (banco)
+ const a=from?await fresh(from):null,b=to?await fresh(to):null;
+ if((from&&!a)||(to&&!b))throw new Error('Jogador não existe mais.');
+ if(from&&a.saldo<v)throw new Error('Saldo insuficiente.');
+ if(from)await db.doc('players/'+from).update({saldo:a.saldo-v});
+ if(to)await db.doc('players/'+to).update({saldo:b.saldo+v});
+ await log({de:from||'banco',para:to||'banco',valor:v,desc})}
+
+const acts={
+ tab:(id)=>{tab=id;msg='';render(true)},
+ logout:()=>{me=null;view='login';msg='';try{sessionStorage.removeItem('bi-me')}catch(e){}render(true)},
+ login:doLogin,register:doRegister,adminlogin:doAdmin,
+ async transfer(){const to=$('#tto').value,v=num('tamt');
+  if(!to||!(v>0))return setMsg('Escolha o jogador e um valor válido.');
+  const r=await request({tipo:'transferencia',de:me,para:to,valor:v,desc:`${players[me].nome} → ${players[to].nome}: transferência`});setMsg('Transferência '+r,1)},
+ async buy(id){const p=props[id];if(p.dono)return;
+  await pay(me,null,p.preco,`${players[me].nome} comprou ${p.nome}`);
+  await db.doc('props/'+id).update({dono:me});setMsg(`Você comprou ${p.nome}!`,1)},
+ async sell(id){const p=props[id];if(p.dono!==me)return;
+  await pay(null,me,p.preco/2,`${players[me].nome} vendeu ${p.nome} ao banco`);
+  await db.doc('props/'+id).update({dono:null});setMsg(`Vendido por ${fmt(p.preco/2)}.`,1)},
+ async rent(id){const p=props[id];
+  const r=await request({tipo:'aluguel',de:me,para:p.dono,valor:p.aluguel,desc:`${players[me].nome} pagou aluguel de ${p.nome} a ${players[p.dono].nome}`});
+  setMsg('Aluguel '+r,1)},
+ async addp(){const n=$('#nn').value.trim(),pw=$('#np').value,s=$('#ns').value===''?START:Math.max(0,Math.floor(Number($('#ns').value)||0)),k=slug(n);
+  if(!k||pw.length<3)return setMsg('Informe nome e senha (mín. 3 caracteres).');
+  const ex=players[k],h=await sha(pw);
+  await db.doc('players/'+k).set({nome:n,hash:h,saldo:ex?ex.saldo:s});
+  if(!ex&&s)await log({de:'banco',para:k,valor:s,desc:`Saldo inicial de ${n}`});
+  setMsg(ex?'Senha atualizada.':'Jogador criado.',1)},
+ async credit(k){const v=num('cr-'+k);if(!(v>0))return;await pay(null,k,v,`Banco creditou ${fmt(v)} a ${players[k].nome}`);render(true)},
+ async debit(k){const v=num('cr-'+k);if(!(v>0))return;
+  const a=await fresh(k);const d=Math.min(v,a.saldo);await pay(k,null,d,`Banco debitou ${fmt(d)} de ${players[k].nome}`);render(true)},
+ delp(k){dlg={text:'Excluir o jogador '+players[k].nome+'? As propriedades dele voltam ao banco.',act:'delnow',id:k};renderModal()},
+ async delnow(k){
+  for(const [id,x] of Object.entries(props))if(x.dono===k)await db.doc('props/'+id).update({dono:null});
+  await db.doc('players/'+k).delete()},
+ dlgno(){dlg=null;perr='';renderModal()},
+ async dlgyes(){const d=dlg;dlg=null;renderModal();await acts[d.act](d.id)},
+ async offer(id){const to=$('#sb-'+id).value,v=num('sv-'+id);
+  if(!to||!(v>0))return setMsg('Escolha o comprador e um valor válido.');
+  await db.collection('ofertas').add({prop:id,de:me,para:to,valor:v,ts:Date.now(),status:'aberta'});setMsg('Oferta enviada a '+players[to].nome+'.',1)},
+ async accept(oid){const o=ofs[oid];if(!o)return;const p=props[o.prop];
+  if(!p||p.dono!==o.de){await db.doc('ofertas/'+oid).update({status:'cancelada'});return setMsg('Essa propriedade não é mais do vendedor.')}
+  const r=await request({tipo:'venda',de:o.para,para:o.de,valor:o.valor,prop:o.prop,desc:`${players[o.para].nome} comprou ${p.nome} de ${players[o.de].nome} por ${fmt(o.valor)}`});
+  await db.doc('ofertas/'+oid).update({status:'aceita'});setMsg('Compra '+r,1)},
+ async decline(oid){await db.doc('ofertas/'+oid).update({status:'encerrada'})},
+ async approve(pid){const r=pend[pid];if(!r)return;
+  try{await settle(r);await db.doc('pend/'+pid).update({status:'aprovada'});perr=''}catch(e){perr=e.message}renderModal()},
+ async reject(pid){await db.doc('pend/'+pid).update({status:'recusada'});perr='';renderModal()},
+ async togglev(){await db.doc('config/admin').update({validar:cfg.validar===false})},
+ async seed(){for(const p of seedList()){const {id,...d}=p;await db.doc('props/'+id).set({...d,dono:null})}},
+ async saveprop(id){await db.doc('props/'+id).update({preco:Math.max(0,num('pp-'+id)||0),aluguel:Math.max(0,num('pa-'+id)||0)})},
+ async free(id){await db.doc('props/'+id).update({dono:null})}
+};
+document.addEventListener('click',async e=>{
+ const b=e.target.closest('[data-act]');if(!b)return;
+ b.disabled=true;
+ try{await acts[b.dataset.act](b.dataset.id)}catch(err){setMsg(err.message||'Erro ao salvar. Tente de novo.')}
+ b.disabled=false});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&view==='login'){const b=document.querySelector('[data-act=login],[data-act=adminlogin]');b&&b.click()}});
+boot();
+</script>
+</body>
+</html>
